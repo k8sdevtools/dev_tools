@@ -1,0 +1,1 @@
+- returns all pods across all name spaces and prints args to a column

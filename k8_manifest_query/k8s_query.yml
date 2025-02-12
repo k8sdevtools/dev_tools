@@ -1,0 +1,6 @@
+kubectl get pods --all-namespaces -o json | \
+jq -r '.items[] | select(.metadata.namespace | startswith("bar")) | select(.metadata.name | startswith("foo")) | .metadata.namespace + " " + .metadata.name' | \
+while read namespace pod; do
+    arg_line=$(kubectl get pod "$pod" -n "$namespace" -o yaml | grep -A 10 "ARG" | grep "^zoo")
+    echo -e "$namespace\t$pod\t$arg_line"
+done | column -t
