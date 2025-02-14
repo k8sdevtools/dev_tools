@@ -1,12 +1,7 @@
-DOCUMENT_NAME="MySSMDocument"
+COMMAND_ID=$(aws ssm send-command \
+  --document-name "MySSMDocument" \
+  --targets '[{"Key":"instanceids","Values":["something"]}]' \
+  --query "Command.CommandId" --output text)
 
-# Get the latest command ID by filtering only by document name
-COMMAND_ID=$(aws ssm list-command-invocations \
-  --filters "Key=document-name,Values=${DOCUMENT_NAME}" \
-  --query "CommandInvocations|[-1].CommandId" \
-  --output text)
+aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "something"
 
-# Wait for the command to finish executing
-aws ssm wait command-executed --command-id "$COMMAND_ID"
-
-echo "SSM Document Execution Finished!"
