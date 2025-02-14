@@ -2,6 +2,7 @@ DOCUMENT_NAME="MySSMDocument"
 
 # Correcting the filter syntax
 COMMAND_ID=$(aws ssm list-command-invocations \
-  --output json | jq -r ".CommandInvocations[] | select(.DocumentName==\"${DOCUMENT_NAME}\")
+  --output json | jq -r ".CommandInvocations[] | select(.DocumentName==\"$DOCUMENT_NAME\") | .CommandId")
+
 
 echo "The Command ID for the document '${DOCUMENT_NAME}' is: $COMMAND_ID"
