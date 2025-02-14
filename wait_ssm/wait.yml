@@ -1,6 +1,7 @@
-COMMAND_ID=$(aws ssm send-command \
-  --document-name "MySSMDocument" \
-  --targets '[{"Key":"instanceids","Values":["id"]}]' \
-  --query "Command.CommandId" --output text)
+aws ssm list-command-invocations \
+  --filters "Key=document-name,Values=${something}" \
+  --query "CommandInvocations[0].CommandId" \
+  --output text
 
-aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "i-1234567890abcdef0"
+aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id ""
+
