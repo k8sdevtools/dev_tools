@@ -1,0 +1,20 @@
+rolling_restart_nodegroup() {
+    local CLUSTER_NAME="$1"
+    local NODEGROUP_NAME="$2"
+    local REGION="${3:-us-east-1}"  # Default region if not provided
+
+    if [[ -z "$CLUSTER_NAME" || -z "$NODEGROUP_NAME" ]]; then
+        echo "Usage: rolling_restart_nodegroup <cluster-name> <nodegroup-name> [region]"
+        return 1
+    fi
+
+    echo "Starting rolling restart for node group: $NODEGROUP_NAME in cluster: $CLUSTER_NAME"
+
+    aws eks update-nodegroup-version \
+        --cluster-name "$CLUSTER_NAME" \
+        --nodegroup-name "$NODEGROUP_NAME" \
+        --region "$REGION" \
+        --force
+
+    echo "Rolling restart initiated for node group: $NODEGROUP_NAME"
+}
