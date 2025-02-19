@@ -18,3 +18,59 @@ rolling_restart_nodegroup() {
 
     echo "Rolling restart initiated for node group: $NODEGROUP_NAME"
 }
+
+____
+
+#!/bin/bash
+
+drain_cordon_nodegroup() {
+    local CLUSTER_NAME="$1"
+    local REGION="${2:-us-east-1}"  # Default to us-east-1 if not provided
+
+    if [[ -z "$CLUSTER_NAME" ]]; then
+        echo "Usage: drain_cordon_nodegroup <cluster-name> [region]"
+        return 1
+    fi
+
+    echo "Fetching node groups for cluster: $CLUSTER_NAME..."
+
+    NODEGROUP_NAMES=$(aws eks list-nodegroups \
+        --cluster-name "$CLUSTER_NAME" \
+        --region "$REGION" \
+        --query "nodegroups[]" \
+        --output text)
+
+    if [[ -z "$NODEGROUP_NAMES" ]]; then
+        echo "No node groups found for cluster: $CLUSTER_NAME"
+        return 1
+    fi
+
+    echo "Found node groups: $NODEGROUP_NAMES"
+
+        NODE_NAMES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+
+    if [[ -z "$NODE_NAMES" ]]; then
+        echo "No nodes found in cluster: $CLUSTER_NAME"
+        return 1
+    fi
+
+    echo "Draining and cordoning nodes: $NODE_NAMES"
+
+    for NODE_NAME in $NODE_NAMES; do
+        echo "Cordoning node: $NODE_NAME..."
+        kubectl cordon "$NODE_NAME"
+
+        echo "Draining node: $NODE_NAME..."
+        kubectl drain "$NODE_NAME" --ignore-daemonsets --delete-emptydir-data --force
+
+        echo "Node $NODE_NAME has been drained and cordoned."
+    done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    if [[ -n "$1" ]]; then
+        drain_cordon_nodegroup "$@"
+    else
+        echo "Script loaded. Run the function manually: drain_cordon_nodegroup <cluster-name> [region]"
+    fi
+fi
