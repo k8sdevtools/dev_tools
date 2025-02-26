@@ -9,15 +9,15 @@ aws_account["invest-dev"]="123,investstuff"
 aws_account["invest-non-prod"]="123,moreinveststuff"
 aws_account["invest-prod"]="456,otherinveststuff"
 
-# Function to display matching key-value pairs and run terraform commands
+# Function to display matching key-value pairs
 display_matching_pairs() {
     local input_aws_account=$1
     local input_aws_environment=$2
 
     for key in "${!aws_account[@]}"; do
         # Split the key into environment and account
-        local env="${key%%-*}"   # Extract the environment part (e.g., "ccbt")
-        local acc="${key#*-}"    # Extract the account part (e.g., "dev")
+        local env="${key%%-*}"   # Extracts 'ccbt' or 'invest'
+        local acc="${key#*-}"    # Extracts 'dev', 'non-prod', 'prod'
 
         # Match specific account and environment or wildcard "all" scenarios
         if { [[ "$input_aws_environment" == "all" ]] || [[ "$input_aws_environment" == "$acc" ]]; } &&
