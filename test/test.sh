@@ -15,19 +15,20 @@ display_matching_pairs() {
     local input_aws_environment=$2
 
     for key in "${!aws_account[@]}"; do
-        local env="${key%%-*}"
-        local acc="${key#*-}"
+        # Split the key into environment and account
+        local env="${key#*-}"
+        local acc="${key%%-*}"
 
-        # If the environment is "all", match all environments for the given account prefix
-        if [[ "$input_aws_environment" == "all" ]] || [[ "$input_aws_environment" == "$env" ]]; then
-            if [[ "$input_aws_account" == "$acc" ]] || [[ "$input_aws_account" == "${key%%-*}" ]]; then
-                IFS=',' read -r account_id extra_info <<< "${aws_account[$key]}"
-                
-                echo "For key '$key':"
-                echo "Account ID: $account_id"
-                echo "Extra Info: $extra_info"
-                echo ""
-            fi
+        # Match specific account and environment or wildcard "all" scenarios
+        if { [[ "$input_aws_environment" == "all" ]] || [[ "$input_aws_environment" == "$env" ]]; } &&
+           { [[ "$input_aws_account" == "all" ]] || [[ "$input_aws_account" == "$acc" ]]; }; then
+            
+            IFS=',' read -r account_id extra_info <<< "${aws_account[$key]}"
+            
+            echo "For key '$key':"
+            echo "Account ID: $account_id"
+            echo "Extra Info: $extra_info"
+            echo ""
         fi
     done
 }
