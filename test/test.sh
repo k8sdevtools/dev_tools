@@ -16,12 +16,12 @@ display_matching_pairs() {
 
     for key in "${!aws_account[@]}"; do
         # Split the key into environment and account
-        local env="${key#*-}"
-        local acc="${key%%-*}"
+        local env="${key%%-*}"   # Extract the environment part (e.g., "ccbt")
+        local acc="${key#*-}"    # Extract the account part (e.g., "dev")
 
         # Match specific account and environment or wildcard "all" scenarios
-        if { [[ "$input_aws_environment" == "all" ]] || [[ "$input_aws_environment" == "$env" ]]; } &&
-           { [[ "$input_aws_account" == "all" ]] || [[ "$input_aws_account" == "$acc" ]]; }; then
+        if { [[ "$input_aws_environment" == "all" ]] || [[ "$input_aws_environment" == "$acc" ]]; } &&
+           { [[ "$input_aws_account" == "all" ]] || [[ "$input_aws_account" == "$env" ]]; }; then
             
             IFS=',' read -r account_id extra_info <<< "${aws_account[$key]}"
             
