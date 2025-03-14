@@ -1,36 +1,39 @@
 try {
-    # Enable WSL and Virtual Machine Platform features
-    Write-Output "Enabling WSL 2 and Virtual Machine Platform..."
-    Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart -ErrorAction Stop
-    Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart -ErrorAction Stop
-    Write-Output "WSL 2 and Virtual Machine Platform enabled successfully."
+    # Define the path to Docker's daemon.json configuration file inside WSL
+    $dockerConfigPath = "C:\Users\$env:USER\AppData\Local\Packages\CanonicalGroupLimited.Ubuntu..._8wekyb3d8bbwe\LocalState\rootfs\etc\docker\daemon.json"
 
-    # Set WSL 2 as the default version
-    Write-Output "Setting WSL 2 as the default version..."
-    wsl --set-default-version 2
+    # Check if the daemon.json file exists, and create it if it doesn't
+    if (-not (Test-Path -Path $dockerConfigPath)) {
+        Write-Output "Creating the daemon.json file..."
+        New-Item -Path $dockerConfigPath -ItemType File -Force
+    }
 
-    # Install Ubuntu as the default WSL 2 distro (if not already installed)
-    Write-Output "Installing Ubuntu on WSL..."
-    wsl --install -d Ubuntu
+    # Define the new configuration content
+    $configContent = @"
+{
+  "registry-mirrors": ["https://your-mirror-url.com"],
+  "insecure-registries": ["your-insecure-registry.com"],
+  "data-root": "/mnt/wsl/docker-data"
+}
+"@
 
-    # Update package list and install Docker CE inside WSL 2
-    Write-Output "Updating package list and installing Docker CE in WSL 2..."
-    wsl -d Ubuntu -- sudo apt update
-    wsl -d Ubuntu -- sudo apt install -y docker.io
-    wsl -d Ubuntu -- sudo usermod -aG docker $USER
+    # Write the new configuration to the file
+    Write-Output "Updating the daemon.json file with the new configuration..."
+    Set-Content -Path $dockerConfigPath -Value $configContent
 
-    # Start Docker inside WSL 2
-    Write-Output "Starting Docker in WSL 2..."
-    wsl -d Ubuntu -- sudo service docker start
+    # Restart Docker service inside WSL
+    Write-Output "Restarting Docker service..."
+    wsl sudo service docker restart
 
-    # Verify Docker is running inside WSL 2
-    Write-Output "Verifying Docker installation..."
-    $dockerInfo = wsl -d Ubuntu -- docker info | Select-String "Operating System"
-    Write-Output "Docker is running inside: $dockerInfo"
+    # Verify the configuration changes
+    Write-Output "Verifying Docker settings..."
+    $dockerInfo = wsl docker info | Select-String "Registry Mirrors|Insecure Registries|Docker Root Dir"
+    Write-Output "Docker settings after update:"
+    Write-Output $dockerInfo
 
-    Write-Output "Docker CE setup in WSL 2 completed successfully."
+    Write-Output "Docker configuration updated successfully."
 
 } catch {
-    Write-Output "An error occurred during setup. Error: $_"
+    Write-Output "An error occurred: $_"
     exit 1
 }
