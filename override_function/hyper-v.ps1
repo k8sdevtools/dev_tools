@@ -1,37 +1,74 @@
 try {
-    # Define the path to Docker's daemon.json configuration file inside WSL
-    $dockerConfigPath = "C:\Users\$env:USER\AppData\Local\Packages\CanonicalGroupLimited.Ubuntu..._8wekyb3d8bbwe\LocalState\rootfs\etc\docker\daemon.json"
+    # Enable Hyper-V and check if it requires a restart
+    $hyperVResult = Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart -ErrorAction Stop
 
-    # Check if the daemon.json file exists, and create it if it doesn't
+    if ($hyperVResult.RestartNeeded -eq $false) {
+        Write-Output "Hyper-V installed successfully."
+    } else {
+        Write-Output "Hyper-V installed, but a restart is required."
+    }
+
+    # Install Docker CE (Docker Engine) manually from the MSI package
+    Write-Output "Installing Docker CE..."
+    $dockerMSIUrl = "https://download.docker.com/win/stable/Docker%20for%20Windows%20Server%20(Windows%2010%20Pro).msi"
+    $dockerMSIPath = "$env:TEMP\DockerEngine.msi"
+
+    Invoke-WebRequest -Uri $dockerMSIUrl -OutFile $dockerMSIPath
+
+    Start-Process msiexec.exe -ArgumentList "/i", "$dockerMSIPath", "/quiet", "/norestart" -Wait
+
+    # Clean up the installer
+    Remove-Item -Path $dockerMSIPath -Force
+
+    Write-Output "Docker Engine (Docker CE) installed successfully."
+
+    # Switch Docker to Windows Containers (Hyper-V mode)
+    Write-Output "Switching Docker to Windows Containers (Hyper-V)..."
+    & "C:\Program Files\Docker\Docker\DockerCli.exe" -SwitchDaemon
+
+    # Modify Docker configuration to change data-root, registry-mirrors, and insecure-registries
+    $dockerConfigPath = "C:\ProgramData\Docker\config\daemon.json"
+
+    # Check if daemon.json exists and create it if not
     if (-not (Test-Path -Path $dockerConfigPath)) {
-        Write-Output "Creating the daemon.json file..."
+        Write-Output "Creating Docker configuration file (daemon.json)..."
         New-Item -Path $dockerConfigPath -ItemType File -Force
     }
 
-    # Define the new configuration content
-    $configContent = @"
+    # Write the JSON content directly
+    $jsonConfig = @"
 {
   "registry-mirrors": ["https://your-mirror-url.com"],
   "insecure-registries": ["your-insecure-registry.com"],
-  "data-root": "/mnt/wsl/docker-data"
+  "data-root": "C:\\docker"
 }
 "@
+    
+    # Write the JSON to the daemon.json file
+    Set-Content -Path $dockerConfigPath -Value $jsonConfig -Force
 
-    # Write the new configuration to the file
-    Write-Output "Updating the daemon.json file with the new configuration..."
-    Set-Content -Path $dockerConfigPath -Value $configContent
+    Write-Output "Docker configuration updated with new registry mirrors, insecure registries, and data-root."
 
-    # Restart Docker service inside WSL
-    Write-Output "Restarting Docker service..."
-    wsl sudo service docker restart
+    # Ensure Docker service is running
+    $dockerStatus = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue
+    if ($dockerStatus.Status -ne 'Running') {
+        Write-Output "Starting Docker..."
+        Start-Service -Name "com.docker.service"
+        Start-Sleep -Seconds 10
+    }
 
-    # Verify the configuration changes
-    Write-Output "Verifying Docker settings..."
-    $dockerInfo = wsl docker info | Select-String "Registry Mirrors|Insecure Registries|Docker Root Dir"
-    Write-Output "Docker settings after update:"
-    Write-Output $dockerInfo
+    # Build the Docker image
+    $dockerImage = "my-docker-image"
+    $dockerfilePath = "."
 
-    Write-Output "Docker configuration updated successfully."
+    Write-Output "Building Docker image..."
+    docker build -t $dockerImage $dockerfilePath
+
+    if ($?) {
+        Write-Output "Docker build completed successfully."
+    } else {
+        Write-Output "Docker build failed."
+    }
 
 } catch {
     Write-Output "An error occurred: $_"
