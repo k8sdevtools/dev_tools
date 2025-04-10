@@ -4,7 +4,7 @@ metadata:
   name: label-sysbox-nodes
   namespace: kube-system
 spec:
-  schedule: "*/5 * * * *"  # Every 5 minutes
+  schedule: "*/5 * * * *"
   jobTemplate:
     spec:
       template:
@@ -14,29 +14,38 @@ spec:
           - name: label-nodes
             image: bitnami/kubectl:latest
             command:
-            - /bin/bash
+            - /bin/sh
             - -c
             - |
-              set -euo pipefail
               MAX_RETRIES=3
               SLEEP_INTERVAL=10
 
-              for ((i=1; i<=MAX_RETRIES; i++)); do
-                echo "[$i/$MAX_RETRIES] Checking for unlabeled nodes..."
-                nodes=$(kubectl get nodes -l 'sysbox-install!=yes' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' || true)
+              i=1
+              while [ $i -le $MAX_RETRIES ]; do
+                echo "[$i/$MAX_RETRIES] Checking nodes..."
+                changed=0
 
-                if [[ -z "$nodes" ]]; then
-                  echo "All nodes are labeled. Done!"
+                for node in $(kubectl get nodes -o name); do
+                  name=$(echo $node | cut -d'/' -f2)
+                  label=$(kubectl get $node -o jsonpath='{.metadata.labels.sysbox-install}' 2>/dev/null)
+
+                  if [ "$label" != "yes" ]; then
+                    echo "Labeling $node"
+                    kubectl label $node sysbox-install=yes --overwrite
+                    changed=1
+                  else
+                    echo "$node already labeled."
+                  fi
+                done
+
+                if [ "$changed" -eq 0 ]; then
+                  echo "All nodes labeled. Done!"
                   break
                 fi
 
-                for node in $nodes; do
-                  echo "Labeling node: $node"
-                  kubectl label node "$node" sysbox-install=yes --overwrite
-                done
-
-                echo "Sleeping for $SLEEP_INTERVAL seconds..."
-                sleep "$SLEEP_INTERVAL"
+                echo "Sleeping $SLEEP_INTERVAL seconds before retry..."
+                sleep $SLEEP_INTERVAL
+                i=$((i + 1))
               done
             resources:
               limits:
