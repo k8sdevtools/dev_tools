@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: label-sysbox-nodes
+  namespace: kube-system
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: sysbox-labeler
+          containers:
+          - name: label-nodes
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              MAX_RETRIES=3
+              SLEEP_INTERVAL=10
+
+              for ((i=1; i<=MAX_RETRIES; i++)); do
+                echo "[$i/$MAX_RETRIES] Checking for unlabeled nodes..."
+                nodes=$(kubectl get nodes -l 'sysbox-install!=yes' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' || true)
+
+                if [[ -z "$nodes" ]]; then
+                  echo "All nodes are labeled. Done!"
+                  break
+                fi
+
+                for node in $nodes; do
+                  echo "Labeling node: $node"
+                  kubectl label node "$node" sysbox-install=yes --overwrite
+                done
+
+                echo "Sleeping for $SLEEP_INTERVAL seconds..."
+                sleep "$SLEEP_INTERVAL"
+              done
+            resources:
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+          restartPolicy: OnFailure
