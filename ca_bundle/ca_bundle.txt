@@ -1,0 +1,19 @@
+sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+sudo chmod +x /usr/local/bin/yq
+
+
+
+update-cabundle:
+	@echo "Creating ConfigMap from certs/ca.crt"
+	kubectl create configmap webhook-ca-bundle \
+		--from-file=ca.crt=certs/ca.crt \
+		--namespace=$(WEBHOOK_NAMESPACE) \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+	@echo "Patching manifests with CA bundle"
+	CA_BUNDLE=$$(base64 -w0 < certs/ca.crt) ;\
+	yq e ".webhooks[].clientConfig.caBundle = \"$$CA_BUNDLE\"" -i dev/manifests/cluster-config/mutating.config.yaml ;\
+	yq e ".webhooks[].clientConfig.caBundle = \"$$CA_BUNDLE\"" -i dev/manifests/cluster-config/validating.config.yaml
+
+
+WEBHOOK_NAME=gitlab-workspaces-kubernetes-webhook WEBHOOK_NAMESPACE=default make gen-certs update-cabundle
