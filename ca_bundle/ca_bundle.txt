@@ -1,10 +1,58 @@
-.PHONY: gen-certs update-cabundle
+.PHONY: gen-certs create-configmap update-cabundle
 
+# This will generate the certificates
 gen-certs:
 	WEBHOOK_NAME=$(WEBHOOK_NAME) WEBHOOK_NAMESPACE=$(WEBHOOK_NAMESPACE) ./dev/generate-certs.sh
 
+# This will create the Kubernetes ConfigMap with the CA certificate
+create-configmap:
+	kubectl create configmap webhook-ca-bundle \
+		--from-file=ca.crt=certs/ca.crt \
+		-n default
+
+# This will update the CA bundle in the mutating and validating config files
 update-cabundle:
-	./dev/patch-ca-bundle.sh
+	# Get the base64-encoded CA bundle from the ConfigMap
+	CA_BUNDLE=$$(kubectl get configmap webhook-ca-bundle -n default -o=jsonpath='{.data.ca\.crt}' | base64 -w0); \
+	# Patch the mutating webhook config with the CA bundle
+	yq e ".webhooks[].clientConfig.caBundle = \"$$CA_BUNDLE\"" -i dev/manifests/cluster-config/mutating.config.yaml; \
+	# Patch the validating webhook config with the CA bundle
+	yq e ".webhooks[].clientConfig.caBundle = \"$$CA_BUNDLE\"" -i dev/manifests/cluster-config/validating.config.yaml
 
 
-WEBHOOK_NAME=gitlab-workspaces-kubernetes-webhook WEBHOOK_NAMESPACE=default make gen-certs update-cabundle
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: gitlab-workspaces-kubernetes-webhook
+webhooks:
+  - name: gitlab-workspaces-kubernetes-webhook.default.svc
+    clientConfig:
+      # This field will be replaced by the Makefile script
+      caBundle: |
+        {{ .Values.webhook.caBundle }}  # <-- This is where the CA bundle will go
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        scope: "Namespaced"
+
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: gitlab-workspaces-kubernetes-webhook
+webhooks:
+  - name: gitlab-workspaces-kubernetes-webhook.default.svc
+    clientConfig:
+      # This field will be replaced by the Makefile script
+      caBundle: |
+        {{ .Values.webhook.caBundle }}  # <-- This is where the CA bundle will go
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        scope: "Namespaced"
+
+make gen-certs create-configmap update-cabundle
