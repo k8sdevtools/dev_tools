@@ -1,18 +1,10 @@
+.PHONY: gen-certs update-cabundle
+
+gen-certs:
+	WEBHOOK_NAME=$(WEBHOOK_NAME) WEBHOOK_NAMESPACE=$(WEBHOOK_NAMESPACE) ./dev/generate-certs.sh
+
 update-cabundle:
-	@echo "Updating webhook manifests with CA bundle"
-	CA_BUNDLE=$$(base64 -w0 < certs/ca.crt) ;\
-	yq e ".webhooks[].clientConfig.caBundle = \"$$CA_BUNDLE\"" -i dev/manifests/cluster-config/mutating.config.yaml ;\
-	yq e ".webhooks[].clientConfig.caBundle = \"$$CA_BUNDLE\"" -i dev/manifests/cluster-config/validating.config.yaml
+	./dev/patch-ca-bundle.sh
 
 
-
-clientConfig:
-  service:
-    name: gitlab-workspaces-kubernetes-webhook
-    namespace: default
-    path: "/mutate"
-  caBundle: "" 
- 
-
-patch.sh
-make update-cabundle
+WEBHOOK_NAME=gitlab-workspaces-kubernetes-webhook WEBHOOK_NAMESPACE=default make gen-certs update-cabundle
