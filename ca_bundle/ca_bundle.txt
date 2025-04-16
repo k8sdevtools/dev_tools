@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CERTS_DIR="${ROOT_DIR}/.certs"
@@ -12,18 +10,17 @@ mkdir -p "${CERTS_DIR}"
 WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
 
-# Generate CA key and certificate
+# Generate CA and server certs
 openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
+
 openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
   -subj "/C=AU/CN=${WEBHOOK_NAME}" \
   -out "${CERTS_DIR}/ca.crt"
 
-# Generate server key and CSR
 openssl req -newkey rsa:2048 -nodes -keyout "${CERTS_DIR}/server.key" \
   -subj "/C=AU/CN=${WEBHOOK_NAME}" \
   -out "${CERTS_DIR}/server.csr"
 
-# Sign server certificate with CA
 openssl x509 -req \
   -extfile <(printf "subjectAltName=DNS:${WEBHOOK_NAME}.${WEBHOOK_NAMESPACE}.svc") \
   -days 365 \
@@ -31,35 +28,35 @@ openssl x509 -req \
   -CA "${CERTS_DIR}/ca.crt" -CAkey "${CERTS_DIR}/ca.key" -CAcreateserial \
   -out "${CERTS_DIR}/server.crt"
 
-# Create Kubernetes TLS secret
-echo
-echo ">> Generating kube secrets..."
+# Create Kubernetes secret
 kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
   --cert="${CERTS_DIR}/server.crt" \
   --key="${CERTS_DIR}/server.key" \
   --dry-run=client -o yaml \
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
-# Prepare CA bundle for YAML injection
-echo
-echo ">> MutatingWebhookConfiguration caBundle:"
-CA_BUNDLE=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
-FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w 64 | sed 's/^/        /')
+# Prepare CA cert as folded block with 8-space indent
+FOLDED_CA=$(base64 -w0 < "${CERTS_DIR}/ca.crt" | fold -w64 | sed 's/^/        /')
 
-# Update YAMLs using sed
-for yaml in \
-  "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
-  "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
-do
-  echo ">> Updating $yaml"
-  # Ensure we properly handle the indentation and multiline values
-  sed -i "/clientConfig:/a \\ 
-    caBundle: |\\
-    $FOLDED_CA" "$yaml"
-done
+# Function to update caBundle in a YAML file
+update_ca_bundle() {
+  local file="$1"
+  echo ">> Updating caBundle in $file"
 
-# Clean up
+  # Use sed to replace the caBundle block with the new one
+  sed -i.bak -E "/caBundle: \|/{
+    :a
+    N
+    /^\s{6}caBundle: \|\n(\s{8}.+\n)+/!ba
+    s|(^\s{6}caBundle: \|\n)(\s{8}.+\n)+|\1$FOLDED_CA\n|
+  }" "$file"
+}
+
+update_ca_bundle "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml"
+update_ca_bundle "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
+
+# Clean up certs
 rm -rf "${CERTS_DIR}"
 
 echo
-echo "✅ caBundle injected successfully"
+echo "✅ caBundle updated and injected properly."
