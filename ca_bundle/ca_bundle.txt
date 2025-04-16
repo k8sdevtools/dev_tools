@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
+set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -38,42 +38,19 @@ kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tl
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
 echo
-echo ">> Encoding and injecting caBundle..."
+echo ">> MutatingWebhookConfiguration caBundle:"
+CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
 
-# Generate base64-encoded CA bundle and indent each line with 6 spaces
-CA_B64=$(base64 -w0 < "${CERTS_DIR}/ca.crt" | fold -w64 | sed 's/^/      /')
+# Format base64 cert with 4-space indentation
+INDENTED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/    /')
 
 for yaml in \
   "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
   "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
 do
   echo ">> Updating $yaml"
-
-  awk -v ca_bundle="$CA_B64" '
-    BEGIN { replacing = 0 }
-    {
-      if ($0 ~ /caBundle:[[:space:]]*\|/) {
-        print $0
-        replacing = 1
-        next
-      }
-      if (replacing) {
-        if ($0 ~ /^[^[:space:]]/) {
-          replacing = 0
-          print ca_bundle
-        }
-        else {
-          next
-        }
-      }
-      if (!replacing) print $0
-    }
-    END {
-      if (replacing) print ca_bundle
-    }
-  ' "$yaml" > "$yaml.tmp" && mv "$yaml.tmp" "$yaml"
+  # Replace <CA> with formatted CA_BUNDLE
+  sed -i "/caBundle: |/{n;N;d;}; s|<CA>|$INDENTED_CA|" "$yaml"
 done
 
-echo
-echo ">> Clean up temp certs"
 rm -rf "${CERTS_DIR}"
