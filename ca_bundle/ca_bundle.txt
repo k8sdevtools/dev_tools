@@ -1,8 +1,12 @@
 #!/bin/bash
 
+set -e
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CERTS_DIR="${ROOT_DIR}/.certs"
+TEMPLATE="${SCRIPT_DIR}/manifests/webhook/template.yaml"
+OUTPUT="${SCRIPT_DIR}/manifests/cluster-config/mutating.config.yaml"
 
 rm -rf "${CERTS_DIR}"
 mkdir -p "${CERTS_DIR}"
@@ -35,28 +39,14 @@ kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tl
   --dry-run=client -o yaml \
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
-# Prepare CA cert as folded block with 8-space indent
-FOLDED_CA=$(base64 -w0 < "${CERTS_DIR}/ca.crt" | fold -w64 | sed 's/^/        /')
+# Convert CA cert to base64 and indent
+CA_B64=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
+CA_INDENTED=$(echo "$CA_B64" | fold -w 64 | sed 's/^/        /')  # 8-space indent for block under 6-space caBundle:
 
-# Function to update caBundle in a YAML file
-update_ca_bundle() {
-  local file="$1"
-  echo ">> Updating caBundle in $file"
-
-  # Use sed to replace the caBundle block with the new one
-  sed -i.bak -E "/caBundle: \|/{
-    :a
-    N
-    /^\s{6}caBundle: \|\n(\s{8}.+\n)+/!ba
-    s|(^\s{6}caBundle: \|\n)(\s{8}.+\n)+|\1$FOLDED_CA\n|
-  }" "$file"
-}
-
-update_ca_bundle "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml"
-update_ca_bundle "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
-
-# Clean up certs
-rm -rf "${CERTS_DIR}"
+# Replace <CA> in the template
+sed "s|<CA>|$CA_INDENTED|" "$TEMPLATE" > "$OUTPUT"
 
 echo
-echo "✅ caBundle updated and injected properly."
+echo "✅ MutatingWebhookConfiguration written to $OUTPUT"
+
+rm -rf "${CERTS_DIR}"
