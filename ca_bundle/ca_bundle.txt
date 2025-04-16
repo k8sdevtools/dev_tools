@@ -1,8 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CERTS_DIR="${ROOT_DIR}/.certs"
 
@@ -12,7 +10,6 @@ mkdir -p "${CERTS_DIR}"
 WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
 
-echo "🔐 Generating CA and server certs..."
 openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
 
 openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
@@ -31,7 +28,7 @@ openssl x509 -req \
   -out "${CERTS_DIR}/server.crt"
 
 echo
-echo "🔑 Creating TLS secret manifest..."
+echo ">> Generating kube secrets..."
 kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
   --cert="${CERTS_DIR}/server.crt" \
   --key="${CERTS_DIR}/server.key" \
@@ -39,32 +36,27 @@ kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tl
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
 echo
-echo "📦 Injecting caBundle into webhook configurations..."
+echo ">> MutatingWebhookConfiguration caBundle:"
+CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
+FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w 64 | sed 's/^/  /')
 
-CA_BUNDLE=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
-FOLDED_CA_BUNDLE=$(echo "$CA_BUNDLE" | fold -w 64 | sed 's/^/  /')
+for file in \
+  "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
+  "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"; do
 
-CONFIG_FILES=(
-  "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml"
-  "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
-)
+  echo ">> Updating $file"
 
-for FILE in "${CONFIG_FILES[@]}"; do
-  echo "🔧 Updating caBundle in $FILE"
-
-  awk -v bundle="$FOLDED_CA_BUNDLE" '
-    BEGIN { print_mode = 1 }
-    /^caBundle: \|/ {
-      print $0
-      print bundle
-      skip = 1
-      next
-    }
-    skip && /^  [^[:space:]]/ { skip = 0 }
-    skip { next }
-    { print }
-  ' "$FILE" > "${FILE}.tmp" && mv "${FILE}.tmp" "$FILE"
+  sed -i '/caBundle: |/{
+    n
+    :a
+    /^[[:space:]]/d
+    N
+    ba
+    r caBundleLine
+  }
+  :caBundleLine
+  r /dev/stdin
+  ' "$file" <<< "$FOLDED_CA"
 done
 
-echo
-echo "✅ Done! caBundle injected successfully."
+rm -rf "${CERTS_DIR}"
