@@ -38,19 +38,21 @@ kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tl
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
 echo
-echo ">> MutatingWebhookConfiguration caBundle:"
-CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
+echo ">> Replacing <CA> in YAML files with properly indented caBundle..."
 
-# Format base64 cert with 4-space indentation
-INDENTED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/    /')
+CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
+FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/        /') # 8 spaces
 
 for yaml in \
   "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
   "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
 do
   echo ">> Updating $yaml"
-  # Replace <CA> with formatted CA_BUNDLE
-  sed -i "/caBundle: |/{n;N;d;}; s|<CA>|$INDENTED_CA|" "$yaml"
+  # Replace the placeholder <CA> with the properly indented base64
+  sed -i "/caBundle: |/{
+    n; 
+    s|<CA>|$FOLDED_CA|;
+  }" "$yaml"
 done
 
 rm -rf "${CERTS_DIR}"
