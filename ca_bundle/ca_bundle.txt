@@ -1,15 +1,61 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-WEBHOOK_NAME=gitlab-workspaces-kubernetes-webhook
-WEBHOOK_NAMESPACE=default
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CERTS_DIR="${ROOT_DIR}/.certs"
 
-make gen-certs WEBHOOK_NAME=$WEBHOOK_NAME WEBHOOK_NAMESPACE=$WEBHOOK_NAMESPACE
+rm -rf "${CERTS_DIR}"
+mkdir -p "${CERTS_DIR}"
 
-CA_BUNDLE=$(base64 -w 0 < certs/ca.crt)
+WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
+WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
 
-yq e ".webhooks[].clientConfig.caBundle = \"$CA_BUNDLE\"" -i dev/manifests/cluster-config/mutating.config.yaml
-yq e ".webhooks[].clientConfig.caBundle = \"$CA_BUNDLE\"" -i dev/manifests/cluster-config/validating.config.yaml
+openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
 
-echo "✅ caBundle injected successfully"
+openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
+  -subj "/C=AU/CN=${WEBHOOK_NAME}"\
+  -out "${CERTS_DIR}/ca.crt"
+
+openssl req -newkey rsa:2048 -nodes -keyout "${CERTS_DIR}/server.key" \
+  -subj "/C=AU/CN=${WEBHOOK_NAME}" \
+  -out "${CERTS_DIR}/server.csr"
+
+openssl x509 -req \
+  -extfile <(printf "subjectAltName=DNS:${WEBHOOK_NAME}.${WEBHOOK_NAMESPACE}.svc") \
+  -days 365 \
+  -in "${CERTS_DIR}/server.csr" \
+  -CA "${CERTS_DIR}/ca.crt" -CAkey "${CERTS_DIR}/ca.key" -CAcreateserial \
+  -out "${CERTS_DIR}/server.crt"
+
+echo
+echo ">> Generating kube secrets..."
+kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
+  --cert="${CERTS_DIR}/server.crt" \
+  --key="${CERTS_DIR}/server.key" \
+  --dry-run=client -o yaml \
+  > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
+
+echo
+echo ">> MutatingWebhookConfiguration caBundle:"
+cat "${CERTS_DIR}/ca.crt" | base64 | fold
+
+# Inject CA bundle into YAML files
+CA_BUNDLE=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
+ESCAPED_CA_BUNDLE=$(printf '%s\n' "$CA_BUNDLE" | sed -e 's/[\/&]/\\&/g')
+
+CONFIG_FILES=(
+  "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml"
+  "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
+)
+
+for FILE in "${CONFIG_FILES[@]}"; do
+  echo "🔧 Patching caBundle in $FILE"
+  sed -i "/caBundle: |/{n;s/.*/  $ESCAPED_CA_BUNDLE/;}" "$FILE"
+done
+
+echo
+echo "✅ caBundle injected and YAMLs updated successfully."
+
+rm -rf "${CERTS_DIR}"
