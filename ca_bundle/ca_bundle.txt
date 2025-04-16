@@ -12,12 +12,14 @@ mkdir -p "${CERTS_DIR}"
 WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
 
+# Generate CA
 openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
 
 openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
   -subj "/C=AU/CN=${WEBHOOK_NAME}" \
   -out "${CERTS_DIR}/ca.crt"
 
+# Generate server certs
 openssl req -newkey rsa:2048 -nodes -keyout "${CERTS_DIR}/server.key" \
   -subj "/C=AU/CN=${WEBHOOK_NAME}" \
   -out "${CERTS_DIR}/server.csr"
@@ -29,20 +31,21 @@ openssl x509 -req \
   -CA "${CERTS_DIR}/ca.crt" -CAkey "${CERTS_DIR}/ca.key" -CAcreateserial \
   -out "${CERTS_DIR}/server.crt"
 
-echo
-echo ">> Generating kube secrets..."
+# Create secret
 kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
   --cert="${CERTS_DIR}/server.crt" \
   --key="${CERTS_DIR}/server.key" \
   --dry-run=client -o yaml \
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
-echo
-echo ">> MutatingWebhookConfiguration caBundle:"
+# Build CA bundle with 8-space indentation
 CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
 FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/        /')
+
+# Escape for sed (add \n for multi-line)
 ESCAPED_CA=$(printf "%s\n" "$FOLDED_CA" | sed ':a;N;$!ba;s/\n/\\n/g')
 
+# Inject into YAML files
 for yaml in \
   "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
   "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
