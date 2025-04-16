@@ -52,12 +52,10 @@ for yaml in \
   "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
 do
   echo ">> Updating $yaml"
-  # Remove existing caBundle section
-  sed -i '/caBundle:/,/^[^[:space:]]/d' "$yaml"
-  # Insert new caBundle under clientConfig
-  sed -i "/clientConfig:/a \\
-      caBundle: |\\
-$FOLDED_CA" "$yaml"
+  # Ensure we properly handle the indentation and multiline values
+  sed -i "/clientConfig:/a \\ 
+    caBundle: |\\
+    $FOLDED_CA" "$yaml"
 done
 
 # Clean up
