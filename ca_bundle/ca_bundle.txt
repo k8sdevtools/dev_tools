@@ -1,12 +1,10 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CERTS_DIR="${ROOT_DIR}/.certs"
-TEMPLATE="${SCRIPT_DIR}/manifests/webhook/template.yaml"
-OUTPUT="${SCRIPT_DIR}/manifests/cluster-config/mutating.config.yaml"
 
 rm -rf "${CERTS_DIR}"
 mkdir -p "${CERTS_DIR}"
@@ -14,7 +12,6 @@ mkdir -p "${CERTS_DIR}"
 WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
 
-# Generate CA and server certs
 openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
 
 openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
@@ -32,21 +29,34 @@ openssl x509 -req \
   -CA "${CERTS_DIR}/ca.crt" -CAkey "${CERTS_DIR}/ca.key" -CAcreateserial \
   -out "${CERTS_DIR}/server.crt"
 
-# Create Kubernetes secret
+echo
+echo ">> Generating kube secrets..."
 kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
   --cert="${CERTS_DIR}/server.crt" \
   --key="${CERTS_DIR}/server.key" \
   --dry-run=client -o yaml \
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
-# Convert CA cert to base64 and indent
-CA_B64=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
-CA_INDENTED=$(echo "$CA_B64" | fold -w 64 | sed 's/^/        /')  # 8-space indent for block under 6-space caBundle:
+echo
+echo ">> Encoding and injecting caBundle..."
 
-# Replace <CA> in the template
-sed "s|<CA>|$CA_INDENTED|" "$TEMPLATE" > "$OUTPUT"
+# Generate base64-encoded CA bundle and indent each line with 6 spaces
+CA_B64=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
+FOLDED_CA=$(echo "$CA_B64" | fold -w64 | sed 's/^/      /')
+
+for yaml in \
+  "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
+  "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
+do
+  echo ">> Updating $yaml"
+
+  # Replace placeholder <CA> under caBundle: |
+  sed -i "/^\s*caBundle: |/{
+    n
+    s|<CA>|$FOLDED_CA|
+  }" "$yaml"
+done
 
 echo
-echo "✅ MutatingWebhookConfiguration written to $OUTPUT"
-
+echo ">> Clean up temp certs"
 rm -rf "${CERTS_DIR}"
