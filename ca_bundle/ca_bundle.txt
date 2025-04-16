@@ -41,18 +41,19 @@ echo
 echo ">> Replacing <CA> in YAML files with properly indented caBundle..."
 
 CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
-FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/        /') # 8 spaces
+
+# Make a safely escaped version of the base64 string for sed insertion
+FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/        /' | sed ':a;N;$!ba;s/\n/\\n/g')
 
 for yaml in \
   "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
   "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
 do
   echo ">> Updating $yaml"
-  # Replace the placeholder <CA> with the properly indented base64
-  sed -i "/caBundle: |/{
-    n; 
-    s|<CA>|$FOLDED_CA|;
-  }" "$yaml"
+
+  # Replace <CA> in place with the formatted and escaped bundle
+  sed -i "s|<CA>|$FOLDED_CA|" "$yaml"
 done
 
+echo "✅ caBundle updated"
 rm -rf "${CERTS_DIR}"
