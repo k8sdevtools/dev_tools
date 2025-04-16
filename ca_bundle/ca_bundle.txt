@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CERTS_DIR="${ROOT_DIR}/.certs"
 
@@ -12,10 +12,11 @@ mkdir -p "${CERTS_DIR}"
 WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
 
+echo "🔐 Generating CA and server certs..."
 openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
 
 openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
-  -subj "/C=AU/CN=${WEBHOOK_NAME}"\
+  -subj "/C=AU/CN=${WEBHOOK_NAME}" \
   -out "${CERTS_DIR}/ca.crt"
 
 openssl req -newkey rsa:2048 -nodes -keyout "${CERTS_DIR}/server.key" \
@@ -30,7 +31,7 @@ openssl x509 -req \
   -out "${CERTS_DIR}/server.crt"
 
 echo
-echo ">> Generating kube secrets..."
+echo "🔑 Creating TLS secret manifest..."
 kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
   --cert="${CERTS_DIR}/server.crt" \
   --key="${CERTS_DIR}/server.key" \
@@ -38,12 +39,10 @@ kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tl
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
 echo
-echo ">> MutatingWebhookConfiguration caBundle:"
-cat "${CERTS_DIR}/ca.crt" | base64 | fold
+echo "📦 Injecting caBundle into webhook configurations..."
 
-# Inject CA bundle into YAML files
 CA_BUNDLE=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
-ESCAPED_CA_BUNDLE=$(printf '%s\n' "$CA_BUNDLE" | sed -e 's/[\/&]/\\&/g')
+FOLDED_CA_BUNDLE=$(echo "$CA_BUNDLE" | fold -w 64 | sed 's/^/  /')
 
 CONFIG_FILES=(
   "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml"
@@ -51,11 +50,21 @@ CONFIG_FILES=(
 )
 
 for FILE in "${CONFIG_FILES[@]}"; do
-  echo "🔧 Patching caBundle in $FILE"
-  sed -i "/caBundle: |/{n;s/.*/  $ESCAPED_CA_BUNDLE/;}" "$FILE"
+  echo "🔧 Updating caBundle in $FILE"
+
+  awk -v bundle="$FOLDED_CA_BUNDLE" '
+    BEGIN { print_mode = 1 }
+    /^caBundle: \|/ {
+      print $0
+      print bundle
+      skip = 1
+      next
+    }
+    skip && /^  [^[:space:]]/ { skip = 0 }
+    skip { next }
+    { print }
+  ' "$FILE" > "${FILE}.tmp" && mv "${FILE}.tmp" "$FILE"
 done
 
 echo
-echo "✅ caBundle injected and YAMLs updated successfully."
-
-rm -rf "${CERTS_DIR}"
+echo "✅ Done! caBundle injected successfully."
