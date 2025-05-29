@@ -15,3 +15,37 @@ update-ca-trust extract
 /etc/eks/bootstrap.sh ${cluster_name}
 
 --==MYBOUNDARY==--
+
+
+----
+
+[settings.kubernetes]
+cluster-name = "${cluster_name}"
+
+[settings.pki]
+additional-trust-bundle = """-----BEGIN CERTIFICATE-----
+MIIC+TCCAeGgAwIBAgIUXYZ6uyfhFkejbq0OBk3fnFmjLVowDQYJKoZIhvcNAQEL
+...
+-----END CERTIFICATE-----"""
+
+[settings.bootstrap-containers.my-bootstrap]
+source = "public.ecr.aws/eks-distro/bottlerocket-bootstrap:v1.27.0"
+essential = true
+user-data = """#!/bin/bash
+/etc/eks/bootstrap.sh ${cluster_name}
+"""
+
+----
+
+
+resource "aws_launch_template" "bottlerocket" {
+  name_prefix   = "br-eks-ca-"
+  image_id      = data.aws_ami.bottlerocket.id
+  instance_type = "t3.medium"
+
+  user_data = base64encode(templatefile("${path.module}/user_data.toml", {
+    cluster_name = "my-cluster-name"
+  }))
+
+  # Add IAM instance profile, SG, etc.
+}
