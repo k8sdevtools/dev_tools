@@ -22,13 +22,16 @@ update-ca-trust extract
 [settings.kubernetes]
 cluster-name = "${cluster_name}"
 
-[settings.pki]
-additional-trust-bundle = """-----BEGIN CERTIFICATE-----
+[settings.pki.my-trusted-bundle]
+data = """
+-----BEGIN CERTIFICATE-----
 MIIC+TCCAeGgAwIBAgIUXYZ6uyfhFkejbq0OBk3fnFmjLVowDQYJKoZIhvcNAQEL
 ...
------END CERTIFICATE-----"""
+-----END CERTIFICATE-----
+"""
+trusted = true
 
-[settings.bootstrap-containers.my-bootstrap]
+[settings.bootstrap-containers.bootstrap]
 source = "public.ecr.aws/eks-distro/bottlerocket-bootstrap:v1.27.0"
 essential = true
 user-data = """#!/bin/bash
