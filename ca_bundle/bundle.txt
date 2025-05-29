@@ -1,0 +1,17 @@
+Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
+MIME-Version: 1.0
+
+--==MYBOUNDARY==
+Content-Type: text/x-shellscript; charset="us-ascii"
+
+#!/bin/bash
+
+cat <<EOF > /etc/pki/ca-trust/source/anchors/my-ca.crt
+${ca_cert}
+EOF
+
+update-ca-trust extract
+
+/etc/eks/bootstrap.sh ${cluster_name}
+
+--==MYBOUNDARY==--
