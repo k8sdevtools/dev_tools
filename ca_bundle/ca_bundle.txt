@@ -1,5 +1,4 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,48 +10,85 @@ mkdir -p "${CERTS_DIR}"
 
 WEBHOOK_NAME="${WEBHOOK_NAME:-gitlab-workspaces-kubernetes-webhook}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-default}"
+CLUSTER_DOMAIN="${CLUSTER_DOMAIN:-cluster.local}"   # override if your cluster uses a custom domain
 
-# Generate CA
-openssl genrsa -out "${CERTS_DIR}/ca.key" 2048
+###############################################################################
+# 1. Generate a root CA that you will embed in the webhook configuration
+###############################################################################
+openssl genrsa -out "${CERTS_DIR}/ca.key" 4096
+openssl req  -x509 -new -nodes -days 365 \
+  -subj "/C=AU/ST=None/L=None/O=GitLab/CN=${WEBHOOK_NAME}-ca" \
+  -key  "${CERTS_DIR}/ca.key" \
+  -out  "${CERTS_DIR}/ca.crt"
 
-openssl req -new -x509 -days 365 -key "${CERTS_DIR}/ca.key" \
-  -subj "/C=AU/CN=${WEBHOOK_NAME}" \
-  -out "${CERTS_DIR}/ca.crt"
+###############################################################################
+# 2. Build an OpenSSL config on-the-fly so we can pack in all the SAN entries
+###############################################################################
+cat > "${CERTS_DIR}/openssl.cnf" <<EOF
+[ req ]
+default_bits       = 2048
+prompt             = no
+default_md         = sha256
+distinguished_name = dn
+req_extensions     = v3_req
 
-# Generate server certs
-openssl req -newkey rsa:2048 -nodes -keyout "${CERTS_DIR}/server.key" \
-  -subj "/C=AU/CN=${WEBHOOK_NAME}" \
-  -out "${CERTS_DIR}/server.csr"
+[ dn ]
+C  = AU
+CN = ${WEBHOOK_NAME}
 
-openssl x509 -req \
-  -extfile <(printf "subjectAltName=DNS:${WEBHOOK_NAME}.${WEBHOOK_NAMESPACE}.svc") \
-  -days 365 \
-  -in "${CERTS_DIR}/server.csr" \
-  -CA "${CERTS_DIR}/ca.crt" -CAkey "${CERTS_DIR}/ca.key" -CAcreateserial \
-  -out "${CERTS_DIR}/server.crt"
+[ v3_req ]
+keyUsage               = critical, digitalSignature, keyEncipherment
+extendedKeyUsage       = serverAuth, clientAuth
+subjectAltName         = @alt_names
 
-# Create secret
-kubectl --namespace "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
+[ alt_names ]
+DNS.1 = ${WEBHOOK_NAME}
+DNS.2 = ${WEBHOOK_NAME}.${WEBHOOK_NAMESPACE}
+DNS.3 = ${WEBHOOK_NAME}.${WEBHOOK_NAMESPACE}.svc
+DNS.4 = ${WEBHOOK_NAME}.${WEBHOOK_NAMESPACE}.svc.${CLUSTER_DOMAIN}
+DNS.5 = *.${WEBHOOK_NAMESPACE}.svc
+DNS.6 = *.${WEBHOOK_NAMESPACE}.svc.${CLUSTER_DOMAIN}
+EOF
+
+###############################################################################
+# 3. Create the server key / CSR and sign it with the CA
+###############################################################################
+openssl req -new -nodes \
+  -keyout "${CERTS_DIR}/server.key" \
+  -out    "${CERTS_DIR}/server.csr" \
+  -config "${CERTS_DIR}/openssl.cnf"
+
+openssl x509 -req -days 365 \
+  -in   "${CERTS_DIR}/server.csr" \
+  -CA   "${CERTS_DIR}/ca.crt" \
+  -CAkey "${CERTS_DIR}/ca.key" \
+  -CAcreateserial \
+  -out  "${CERTS_DIR}/server.crt" \
+  -extensions v3_req -extfile "${CERTS_DIR}/openssl.cnf"
+
+###############################################################################
+# 4. Wrap the key and cert in a Kubernetes TLS secret (dry-run YAML)
+###############################################################################
+kubectl -n "${WEBHOOK_NAMESPACE}" create secret tls "${WEBHOOK_NAME}-tls" \
   --cert="${CERTS_DIR}/server.crt" \
   --key="${CERTS_DIR}/server.key" \
   --dry-run=client -o yaml \
   > "${SCRIPT_DIR}/manifests/webhook/webhook.tls.secret.yaml"
 
-# Build CA bundle with 8-space indentation
-CA_BUNDLE=$(base64 -w 0 < "${CERTS_DIR}/ca.crt")
+###############################################################################
+# 5. Base64-encode the CA and inject it into the Mutating & Validating configs
+###############################################################################
+CA_BUNDLE=$(base64 -w0 < "${CERTS_DIR}/ca.crt")
 FOLDED_CA=$(echo "$CA_BUNDLE" | fold -w64 | sed 's/^/        /')
-
-# Escape for sed (add \n for multi-line)
 ESCAPED_CA=$(printf "%s\n" "$FOLDED_CA" | sed ':a;N;$!ba;s/\n/\\n/g')
 
-# Inject into YAML files
 for yaml in \
   "${ROOT_DIR}/dev/manifests/cluster-config/mutating.config.yaml" \
   "${ROOT_DIR}/dev/manifests/cluster-config/validating.config.yaml"
 do
-  echo ">> Updating $yaml"
+  echo ">> Injecting CA bundle into $yaml"
   sed -i "s|<CA>|$ESCAPED_CA|" "$yaml"
 done
 
-echo "✅ caBundle updated"
+echo "✅  Certificates generated and manifests updated"
 rm -rf "${CERTS_DIR}"
